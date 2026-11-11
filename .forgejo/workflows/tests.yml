@@ -1,0 +1,22 @@
+# Forgejo Actions: native CI for qobuz-mcp.
+#
+# The test suite is offline by design (fixture transports, no network, no
+# credentials): CI deliberately receives no QOBUZ_* environment at all, and
+# the stdio harness strips any it finds. No runner secrets are required.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: docker
+    container:
+      image: python:3.14-slim
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install package + pytest
+        run: python -m pip install --quiet --disable-pip-version-check -e '.[dev]'
+      - name: Run offline test suite
+        run: pytest -q
