@@ -32,6 +32,9 @@ REQUEST_TIMEOUT_SECONDS = 10.0
 MIN_REQUEST_INTERVAL_SECONDS = 0.5
 DEFAULT_PAGE_LIMIT = 50
 MAX_PLAYLIST_PAGES = 50
+# playlist/get pages its tracks.items and defaults to ~50 per page; ask for
+# 100 per request (live-verified 2026-11) and follow offsets up to the page cap.
+PLAYLIST_TRACKS_PAGE_LIMIT = 100
 
 # Observed endpoints (unverified against live service).
 EP_SEARCH = "catalog/search"  # current clients (Music Assistant). Older ones use search/getResults (query+type).
@@ -89,29 +92,47 @@ def _join_ids(ids: list[int | str]) -> str:
     return ",".join(str(i) for i in ids)
 
 
+def _performer_name(item: dict[str, Any]) -> str | None:
+    """Best-effort performing-artist name from observed shapes.
+
+    catalog/search items carry the performing artist under `performer`
+    (verified live 2026-11); track/get items use `artist`. Prefer
+    `performer`, fall back to `artist`, else None.
+    """
+    for key in ("performer", "artist"):
+        name = (item.get(key) or {}).get("name")
+        if name:
+            return name
+    return None
+
+
 def parse_tracks(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "track_id": item.get("id"),
             "title": item.get("title"),
-            "artist": (item.get("artist") or {}).get("name"),
+            "artist": _performer_name(item),
             "album": (item.get("album") or {}).get("title"),
         }
         for item in items
     ]
 
 
-def parse_playlist(data: dict[str, Any]) -> dict[str, Any]:
+def parse_playlist(
+    data: dict[str, Any], items: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Normalize a playlist/get payload.
 
     Removal needs the playlist-entry identity (playlist_track_id), which is
     distinct from the catalog track id. Minim's docs confirm deleteTracks
     consumes playlist-entry IDs obtained from get_playlist; when the field
-    is absent the track id is used as a fallback. Both UNVERIFIED until a
-    real smoke test confirms deleteTracks semantics.
+    is absent the track id is used as a fallback. `items` lets get_playlist
+    supply fully paginated track items; when omitted the payload's first
+    page is used.
     """
     owner = data.get("owner") or {}
-    items = ((data.get("tracks") or {}).get("items")) or []
+    if items is None:
+        items = ((data.get("tracks") or {}).get("items")) or []
     return {
         "playlist_id": data.get("id"),
         "name": data.get("name"),
@@ -225,8 +246,46 @@ class QobuzClient:
         return results
 
     def get_playlist(self, playlist_id: int | str) -> dict[str, Any]:
-        data = self._get(EP_PLAYLIST_GET, {"playlist_id": playlist_id, "extra": "tracks"})
-        return parse_playlist(data or {})
+        """Fetch a playlist, following track pagination.
+
+        playlist/get pages its `tracks.items` (live-verified 2026-11: a
+        54-track playlist returned a 50-item first page without explicit
+        limit/offset). Removal needs entry IDs at ANY position, so fetch
+        every page, bounded by MAX_PLAYLIST_PAGES so a misbehaving server
+        cannot loop forever.
+        """
+        all_items: list[dict[str, Any]] = []
+        last_page: dict[str, Any] = {}
+        offset = 0
+        pages = 0
+        while True:
+            data = (
+                self._get(
+                    EP_PLAYLIST_GET,
+                    {
+                        "playlist_id": playlist_id,
+                        "extra": "tracks",
+                        "limit": PLAYLIST_TRACKS_PAGE_LIMIT,
+                        "offset": offset,
+                    },
+                )
+                or {}
+            )
+            last_page = data
+            page_items = ((data.get("tracks") or {}).get("items")) or []
+            all_items.extend(page_items)
+            pages += 1
+            total = (data.get("tracks") or {}).get("total")
+            if pages >= MAX_PLAYLIST_PAGES:
+                break
+            if isinstance(total, int):
+                if len(all_items) >= total:
+                    break
+            elif len(page_items) < PLAYLIST_TRACKS_PAGE_LIMIT:
+                # No total reported: fall back to the short-page heuristic.
+                break
+            offset += len(page_items)
+        return parse_playlist(last_page, all_items)
 
     # -- writes (gated) ---------------------------------------------------
 
