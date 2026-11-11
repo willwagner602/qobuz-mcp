@@ -10,7 +10,8 @@ session and supplies them via the local process environment:
                          ownership checks that gate remove/delete)
 - QOBUZ_ENABLE_WRITES    opt-in ("1"/"true"/"yes") that exposes playlist
                          write tools after the operator has run the
-                         read-only smoke test
+                         read-only smoke test; the flag is self-attestation,
+                         not a programmatic check
 
 No password is ever requested, stored, or transmitted by this module, and
 browser credential extraction is never automated — the copy is the

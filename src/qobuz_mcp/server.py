@@ -4,9 +4,10 @@ Implements the MCP stdio surface (newline-delimited JSON-RPC 2.0):
 initialize, tools/list, tools/call. Runs fully offline until configured
 with eligible credentials; all account operations fail closed without them.
 
-Write tools (create/add/remove/delete playlist) are registered ONLY when
-QobuzClient.validation_passed is True, which requires out-of-band endpoint,
-auth, and payload validation with eligible Qobuz-issued credentials.
+Write tools (create/add/remove/delete playlist) register only when the
+operator sets QOBUZ_ENABLE_WRITES. That flag is the operator's explicit
+self-attestation — not a programmatic validation check; runtime safety
+rests on exact-boolean confirm:true and fresh-read ownership verification.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from .config import config_status, load_client, redact
 from .qobuz_api import QobuzClient
 
 PROTOCOL_VERSION = "2024-11-05"
+SUPPORTED_PROTOCOL_VERSIONS = frozenset({PROTOCOL_VERSION})
 SERVER_NAME = "qobuz-mcp"
 
 # Tools that touch the Qobuz API. Registered always; calls fail closed
@@ -177,6 +179,13 @@ def _strict_confirm(value: Any) -> bool:
     return value is True
 
 
+def _strict_bool(value: Any, field: str) -> bool:
+    """Tool schemas promise booleans; reject other JSON types instead of coercing."""
+    if value is True or value is False:
+        return value
+    raise ValueError(f"{field} must be a boolean (true/false), not {type(value).__name__}")
+
+
 def call_tool(client: QobuzClient | None, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Dispatch a tools/call. Account operations fail closed without a client."""
     if name == "server_status":
@@ -228,7 +237,7 @@ def call_tool(client: QobuzClient | None, name: str, arguments: dict[str, Any]) 
             created = c.create_playlist(
                 name=str(arguments["name"]),
                 confirm=_strict_confirm(arguments.get("confirm", False)),
-                is_public=bool(arguments.get("is_public", False)),
+                is_public=_strict_bool(arguments.get("is_public", False), "is_public"),
             )
             return _text_result(json.dumps({"created": created}, indent=2))
         if name == "add_tracks_to_playlist":
@@ -282,10 +291,16 @@ def handle_request(
 
     try:
         if method == "initialize":
-            requested = (message.get("params") or {}).get("protocolVersion", PROTOCOL_VERSION)
+            params = message.get("params")
+            if not isinstance(params, dict):
+                params = {}
+            requested = params.get("protocolVersion", PROTOCOL_VERSION)
+            negotiated = (
+                requested if requested in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
+            )
             return reply(
                 {
-                    "protocolVersion": requested,
+                    "protocolVersion": negotiated,
                     "capabilities": {"tools": {"listChanged": False}},
                     "serverInfo": {"name": SERVER_NAME, "version": __version__},
                 }

@@ -14,8 +14,9 @@ Safety rules enforced by this module:
 - remove/delete always perform a fresh playlist read first and verify the
   playlist is owned by the authenticated user; if ownership cannot be
   established, they fail closed with OwnershipVerificationError.
-- The MCP layer exposes write tools ONLY after out-of-band endpoint
-  validation sets QobuzClient.validation_passed = True.
+- QobuzClient.validation_passed is the operator's write-enablement opt-in
+  (QOBUZ_ENABLE_WRITES): an attestation, not a validation. Runtime guards
+  are explicit confirm:true and fresh-read ownership verification.
 """
 
 from __future__ import annotations
@@ -156,8 +157,9 @@ class QobuzClient:
         self.app_secret = app_secret  # unused by the session route; reserved
         self.auth_token: str | None = None
         self.user_id: int | None = None
-        # Set to True ONLY after endpoint/auth/payload validation with
-        # eligible credentials; gates MCP write-tool registration.
+        # Operator write-enablement opt-in (QOBUZ_ENABLE_WRITES). This is an
+        # attestation, not a programmatic validation; it gates MCP write-tool
+        # registration only — safety rests on confirm/ownership guards.
         self.validation_passed = False
         self._transport = transport or default_transport
         self._last_request_at: float | None = None
