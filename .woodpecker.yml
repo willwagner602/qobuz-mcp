@@ -1,0 +1,14 @@
+# Woodpecker CI for qobuz-mcp.
+#
+# The test suite is offline by design (fixture transports, no network, no
+# credentials): CI deliberately receives no QOBUZ_* environment at all, and
+# the stdio harness strips any it finds. No Woodpecker secrets are required.
+when:
+  - event: [push, pull_request, manual]
+
+steps:
+  - name: tests
+    image: python:3.14-slim
+    commands:
+      - python -m pip install --quiet --disable-pip-version-check -e '.[dev]'
+      - pytest -q
