@@ -76,11 +76,19 @@ SEARCH_FIXTURE = {
     "tracks": {
         "items": [
             {
+                # Shape observed live from catalog/search (2026-11): the
+                # performing artist is under `performer`, not `artist`.
                 "id": 1,
                 "title": "The Hanging Star",
-                "artist": {"name": "Chumbawamba"},
+                "performer": {"name": "Chumbawamba", "id": 108993},
                 "album": {"title": "English Rebel Songs"},
-            }
+            },
+            {
+                # Some endpoints (e.g. track/get) use `artist` instead.
+                "id": 2,
+                "title": "On Exactly Our Own Terms",
+                "artist": {"name": "Chumbawamba"},
+            },
         ]
     }
 }
@@ -95,7 +103,13 @@ def test_search_tracks_parses_results():
             "title": "The Hanging Star",
             "artist": "Chumbawamba",
             "album": "English Rebel Songs",
-        }
+        },
+        {
+            "track_id": 2,
+            "title": "On Exactly Our Own Terms",
+            "artist": "Chumbawamba",
+            "album": None,
+        },
     ]
     qs = query_of(client, transport)
     assert qs["query"] == ["chumbawamba"]
@@ -139,6 +153,42 @@ def test_get_playlist_items_exposes_item_ids():
     assert playlist["owner_id"] == 7
     ids = [t["playlist_track_id"] for t in playlist["tracks"]]
     assert ids == [555001, 555002]  # removal identity, not the catalog track id
+
+
+def test_get_playlist_paginates_track_items():
+    # Live-verified 2026-11: playlist/get pages tracks.items (a 54-track
+    # playlist returned a 50-item first page without explicit limit/offset).
+    # The adapter must follow every page so removals can target any entry.
+    def _page(offset, count):
+        return {
+            "id": 42,
+            "name": "Labor Ballads",
+            "owner": {"id": 7},
+            "tracks": {
+                "limit": qa.PLAYLIST_TRACKS_PAGE_LIMIT,
+                "offset": offset,
+                "total": 3,
+                "items": [
+                    {
+                        "id": 900 + offset + i,
+                        "playlist_track_id": 555001 + offset + i,
+                        "title": f"Song {offset + i}",
+                    }
+                    for i in range(count)
+                ],
+            },
+        }
+
+    client, transport = make_client([_page(0, 2), _page(2, 1)])
+    playlist = client.get_playlist(42)
+    assert [t["playlist_track_id"] for t in playlist["tracks"]] == [555001, 555002, 555003]
+    qs0 = query_of(client, transport, 0)
+    qs1 = query_of(client, transport, 1)
+    assert qs0["offset"] == ["0"]
+    assert qs0["limit"] == [str(qa.PLAYLIST_TRACKS_PAGE_LIMIT)]
+    assert qs1["offset"] == ["2"]
+    assert path_of(transport, 0).endswith(qa.EP_PLAYLIST_GET)
+    assert path_of(transport, 1).endswith(qa.EP_PLAYLIST_GET)
 
 
 # --- writes: confirmation gate ----------------------------------------------

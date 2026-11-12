@@ -92,6 +92,50 @@ def test_invalid_jsonrpc_shape_rejected():
     assert result is not None and result["error"]["code"] == -32602
 
 
+def test_initialize_negotiates_protocol_version():
+    supported = server.handle_request(
+        None,
+        {
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05"},
+        },
+    )
+    assert supported is not None
+    assert supported["result"]["protocolVersion"] == "2024-11-05"
+    unsupported = server.handle_request(
+        None,
+        {
+            "jsonrpc": "2.0",
+            "id": 16,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18"},
+        },
+    )
+    assert unsupported is not None
+    # Unsupported requests get the server's supported version, never an echo.
+    assert unsupported["result"]["protocolVersion"] == "2024-11-05"
+
+
+def test_is_public_rejects_non_boolean():
+    client = _client(True)
+    result = server.handle_request(
+        client,
+        {
+            "jsonrpc": "2.0",
+            "id": 17,
+            "method": "tools/call",
+            "params": {
+                "name": "create_playlist",
+                "arguments": {"name": "X", "confirm": True, "is_public": "false"},
+            },
+        },
+    )
+    assert result is not None and result["result"]["isError"] is True
+    assert "is_public" in result["result"]["content"][0]["text"]
+
+
 def test_search_tracks_fails_closed_without_credentials():
     result = server.handle_request(
         None,
